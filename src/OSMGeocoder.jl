@@ -11,6 +11,8 @@ const base_url = "https://nominatim.openstreetmap.org/search?"
 
 const cache = Dict{UInt64, GeoJSON.FeatureCollection}()
 
+const user_agent = rand('A':'z', 8)  # random user agent to avoid rate limiting
+
 #-----------------------------------------------------------------------------# utils
 function param_str(; kw...)
     out = String[]
@@ -36,8 +38,8 @@ geocode(q::AbstractString) = geocode(; q)
 
 function geocode(; use_cache = true, kw...)
     h = hash_kw(kw)
-    haskey(cache, h) && return cache[h]
-    res = HTTP.get(url(; kw...), ["User-Agent" => "OSMGeocoder.jl"])
+    use_cache && haskey(cache, h) && return cache[h]
+    res = HTTP.get(url(; kw...), ["User-Agent" => "OSMGeocoder.jl - $user_agent"])
     out = GeoJSON.read(res.body)
     return use_cache ? (cache[h] = out) : out
 end
