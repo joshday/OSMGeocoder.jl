@@ -1,6 +1,6 @@
 module OSMGeocoder
 
-using HTTP, JSON, GeoJSON
+using HTTP, GeoJSON
 using DBInterface, SQLite, Scratch  # For caching
 
 export geocode
