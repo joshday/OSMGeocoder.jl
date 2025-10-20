@@ -1,19 +1,31 @@
 module OSMGeocoder
 
-using HTTP, JSON, GeoJSON, StyledStrings
-
-import GeoInterface as GI
-import Extents
+using HTTP, JSON, GeoJSON
+using DBInterface, SQLite, Scratch  # For caching
 
 export geocode
 
-const base_url = "https://nominatim.openstreetmap.org/search?"
+#-----------------------------------------------------------------------------# init
+dbpath::String = ""
+db::SQLite.DB = SQLite.DB()
+user_agent::String = ""
 
-const cache = Dict{UInt64, GeoJSON.FeatureCollection}()
-
-const user_agent = rand('A':'z', 8)  # random user agent to avoid rate limiting
+function __init__()
+    global user_agent = string(hash(rand()))  # random user agent to avoid rate limiting
+    global dbpath = joinpath(Scratch.@get_scratch!("cache"), "db.sqlite")
+    global db = SQLite.DB(dbpath)
+    DBInterface.execute(db, """
+        CREATE TABLE IF NOT EXISTS kv (
+            key BLOB PRIMARY KEY,
+            value BLOB
+        ) WITHOUT ROWID;
+    """)
+    return
+end
 
 #-----------------------------------------------------------------------------# utils
+const base_url = "https://nominatim.openstreetmap.org/search?"
+
 function param_str(; kw...)
     out = String[]
     for (k, v) in kw
@@ -26,22 +38,34 @@ default_params = (; format = "geojson", polygon_geojson = "1")
 
 url(; kw...) = base_url * param_str(; default_params..., kw...)
 
-# Hash function that doesn't depend on order
-function hash_kw(kw)
-    skeys = sort(collect(keys(kw)))
-    svals = [string(kw[k]) for k in skeys]
-    return hash(skeys, hash(svals))
+# "hash" function that doesn't depend on order
+get_key(kw) = string(NamedTuple(kw)[sort(collect(keys(kw)))])
+
+empty_db!() = DBInterface.execute(db, "DELETE FROM kv;")
+
+cache() = ((;key, value=GeoJSON.read(value)) for (key,value) in DBInterface.execute(db, "SELECT * FROM kv;"))
+
+# Look up value in DB.  Returns `nothing` if not found.
+lookup(q) = lookup(; q)
+
+function lookup(; kw...)
+    key = get_key(kw)
+    res = DBInterface.execute(db, "SELECT value FROM kv WHERE key = ?", (key,))
+    return isempty(res) ? nothing : GeoJSON.read(first(res)[1])
 end
 
 #-----------------------------------------------------------------------------# geocode
 geocode(q::AbstractString) = geocode(; q)
 
-function geocode(; use_cache = true, kw...)
-    h = hash_kw(kw)
-    use_cache && haskey(cache, h) && return cache[h]
-    res = HTTP.get(url(; kw...), ["User-Agent" => "OSMGeocoder.jl - $user_agent"])
-    out = GeoJSON.read(res.body)
-    return use_cache ? (cache[h] = out) : out
+function geocode(; kw...)
+    val = lookup(; kw...)
+    if isnothing(val)
+        res = HTTP.get(url(; kw...), ["User-Agent" => user_agent])
+        DBInterface.execute(db, "INSERT INTO kv (key, value) VALUES (?, ?);", (get_key(kw), res.body))
+        out = GeoJSON.read(res.body)
+    else
+        return val
+    end
 end
 
 end

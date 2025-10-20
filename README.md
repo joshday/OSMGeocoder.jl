@@ -7,7 +7,7 @@ Geocoding via OpenStreetMap's [Nominatum](https://nominatim.org/release-docs/dev
 ## Usage
 
 - `OSMGeocoder.geocode` always returns a `GeoJSON.FeatureCollection`.
-- Query results are stored in per-Julia-session cache.
+- Query results are stored in a SQLite database stored in a Scratch.jl scratchspace.
 - For keyword arguments that can be passed to `geocode(; kw...)`, see the [Nominatum Search Queries](https://nominatim.org/release-docs/develop/api/Search/) documentation.
 
 ```julia
@@ -17,5 +17,6 @@ using OSMGeocoder: geocode
 geocode("New York")
 
 # Structured query via keywords (:amenity, :street, :city, :county, :state, :country, :postalcode)
+# This matches just the city geometry
 geocode(city = "New York")
 ```
