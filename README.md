@@ -7,7 +7,7 @@ Geocoding via OpenStreetMap's [Nominatum](https://nominatim.org/release-docs/dev
 ## Usage
 
 - `OSMGeocoder.geocode` always returns a `GeoJSON.FeatureCollection`.
-- Query results are stored in a SQLite database stored in a Scratch.jl scratchspace.
+- Queries are cached in a SQLite database (stored in scratchspace).
 - For keyword arguments that can be passed to `geocode(; kw...)`, see the [Nominatum Search Queries](https://nominatim.org/release-docs/develop/api/Search/) documentation.
 
 ```julia
