@@ -1,6 +1,6 @@
 name = "OSMGeocoder"
 uuid = "28a637ce-2736-498a-9075-487c6d86a7c1"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["Josh Day <emailjoshday@gmail.com> and contributors"]
 
 [deps]
