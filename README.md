@@ -7,16 +7,29 @@ Geocoding via OpenStreetMap's [Nominatum](https://nominatim.org/release-docs/dev
 ## Usage
 
 - `OSMGeocoder.geocode` always returns a `GeoJSON.FeatureCollection`.
-- Queries are cached in a SQLite database (stored in scratchspace).
-- For keyword arguments that can be passed to `geocode(; kw...)`, see the [Nominatum Search Queries](https://nominatim.org/release-docs/develop/api/Search/) documentation.
+- Queries are cached in scratchspace unless a `cache=false` keyword arg is provided.
 
 ```julia
-using OSMGeocoder: geocode
+geocode("New York")  # free-form query -- returns both city and state geometries
 
-# General query.  This will match both the city and the state (2 geometries)
-geocode("New York")
+# geocode(; amenity, street, city, county, state, country, postalcode)
+geocode(city = "New York")  # structured query -- returns only city geometry
+```
 
-# Structured query via keywords (:amenity, :street, :city, :county, :state, :country, :postalcode)
-# This matches just the city geometry
-geocode(city = "New York")
+## Details
+
+- `geocode(q; kw...)` simply wraps `fetch(Query(q; kw...); force=false)`
+  - Use `force=true` to trigger a fresh download
+- Both the `Query` and the downloaded GeoJSON are saved to the cache.
+
+
+```julia
+OSMGeocoder.list()  # Vector{Query} of cached queries
+
+ny = OSMGeocoder.Query(city = "New York")
+OSMGeocoder.fetch(ny)  # If you ran the example above, this loads cached geojson
+
+OSMGeocoder.delete!!(ny)  # Remove query from cache
+
+OSMGeocoder.clear_cache!!()  # Remove all cached queries
 ```

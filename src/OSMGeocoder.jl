@@ -1,71 +1,143 @@
+"""
+    OSMGeocoder
+
+Geocode addresses using the [OpenStreetMap Nominatim API](https://nominatim.openstreetmap.org/).
+Results are returned as GeoJSON `FeatureCollection`s.  The main entry point is [`geocode`](@ref).
+"""
 module OSMGeocoder
 
-using HTTP, GeoJSON
-using DBInterface, SQLite, Scratch  # For caching
+using Scratch, HTTP, GeoJSON, Serialization
 
 export geocode
 
 #-----------------------------------------------------------------------------# init
-dbpath::String = ""
-db::SQLite.DB = SQLite.DB()
 user_agent::String = ""
+cache_dir::String = ""
 
 function __init__()
-    global user_agent = string(hash(rand()))  # random user agent to avoid rate limiting
-    global dbpath = joinpath(Scratch.@get_scratch!("cache"), "db.sqlite")
-    global db = SQLite.DB(dbpath)
-    DBInterface.execute(db, """
-        CREATE TABLE IF NOT EXISTS kv (
-            key BLOB PRIMARY KEY,
-            value BLOB
-        ) WITHOUT ROWID;
-    """)
+    global user_agent = string(hash(rand()))
+    global cache_dir = get_scratch!("cache")
     return
 end
 
-#-----------------------------------------------------------------------------# utils
-const base_url = "https://nominatim.openstreetmap.org/search?"
+#-----------------------------------------------------------------------------# Query
+"""
+    Query(q::String; cache::Bool=true)
+    Query(; cache::Bool=true, amenity="", street="", city="", county="", state="", country="", postalcode="")
 
-function param_str(; kw...)
-    out = String[]
-    for (k, v) in kw
-        push!(out, "$k=$(HTTP.escapeuri(v))")
+A geocoding query for the OpenStreetMap Nominatim API.  Use either a free-form query string `q`
+or structured address fields.  Set `cache=false` to skip caching the result.
+"""
+struct Query
+    q::String
+    amenity::String
+    street::String
+    city::String
+    county::String
+    state::String
+    country::String
+    postalcode::String
+    cache::Bool
+    Query(q::String; cache::Bool=true) = new(q, "", "", "", "", "", "", "", cache)
+    function Query(; cache::Bool=true, amenity="", street="", city="", county="", state="", country="", postalcode="")
+        new("", amenity, street, city, county, state, country, postalcode, cache)
     end
-    return join(out, "&")
 end
 
-default_params = (; format = "geojson", polygon_geojson = "1")
+"""
+    params(qry::Query) -> Dict{String, String}
 
-url(; kw...) = base_url * param_str(; default_params..., kw...)
+Build the HTTP query parameters dictionary for a Nominatim API request.
+"""
+function params(qry::Query)
+    out = Dict("format" => "geojson", "polygon_geojson" => "1")
+    for field in (:q, :amenity, :street, :city, :county, :state, :country, :postalcode)
+        val = getfield(qry, field)
+        isempty(val) || (out[string(field)] = HTTP.escapeuri(val))
+    end
+    return out
+end
 
-# "hash" function that doesn't depend on order
-get_key(kw) = string(NamedTuple(kw)[sort(collect(keys(kw)))])
+"""
+    url(qry::Query) -> String
 
-empty_db!() = DBInterface.execute(db, "DELETE FROM kv;")
+Construct the full Nominatim search URL for the given query.
+"""
+function url(qry::Query)
+    "https://nominatim.openstreetmap.org/search?" * join(["$k=$v" for (k,v) in params(qry)], '&')
+end
 
-cache() = ((;key, value=GeoJSON.read(value)) for (key,value) in DBInterface.execute(db, "SELECT * FROM kv;"))
+filenames(qry::Query) = (;
+    geojson = joinpath(cache_dir, "osm_$(hash(qry)).geojson"),
+    jld = joinpath(cache_dir, "osm_$(hash(qry)).jld")
+)
 
-# Look up value in DB.  Returns `nothing` if not found.
-lookup(q) = lookup(; q)
+"""
+    fetch(qry::Query; force=false)
 
-function lookup(; kw...)
-    key = get_key(kw)
-    res = DBInterface.execute(db, "SELECT value FROM kv WHERE key = ?", (key,))
-    return isempty(res) ? nothing : GeoJSON.read(first(res)[1])
+Fetch geocoding results for `qry`.  Returns cached results when available unless `force=true`.
+"""
+function fetch(qry::Query; force=false)
+    (; geojson, jld) = filenames(qry)
+    if force || !isfile(geojson) || !isfile(jld)
+        res = HTTP.get(url(qry), ["User-Agent" => user_agent])
+        out = GeoJSON.read(res.body)
+        qry.cache && GeoJSON.write(geojson, out)
+        qry.cache && serialize(jld, qry)
+        return out
+    end
+    return GeoJSON.read(read(geojson, String))
+end
+
+"""
+    list() -> Vector{Query}
+
+Return all cached [`Query`](@ref) objects.
+"""
+function list()
+    dir = get_scratch!("cache")
+    return deserialize.(filter(x -> endswith(x, ".jld"), readdir(dir, join=true)))
+end
+
+"""
+    delete!!(qry::Query)
+
+Delete cached result files for the given query.
+"""
+function delete!!(qry::Query)
+    (; geojson, jld) = filenames(qry)
+    rm(geojson; force=true)
+    rm(jld; force=true)
+end
+
+"""
+    clear_cache!()
+
+Delete all cached geocoding results.
+"""
+function clear_cache!!()
+    for qry in list()
+        delete!!(qry)
+    end
 end
 
 #-----------------------------------------------------------------------------# geocode
-geocode(q::AbstractString) = geocode(; q)
+"""
+    geocode(q::String; cache::Bool=true)
+    geocode(; cache::Bool=true, amenity="", street="", city="", county="", state="", country="", postalcode="")
 
-function geocode(; kw...)
-    val = lookup(; kw...)
-    if isnothing(val)
-        res = HTTP.get(url(; kw...), ["User-Agent" => user_agent])
-        DBInterface.execute(db, "INSERT INTO kv (key, value) VALUES (?, ?);", (get_key(kw), res.body))
-        out = GeoJSON.read(res.body)
-    else
-        return val
-    end
-end
+Geocode an address using the OpenStreetMap Nominatim API.  Returns a GeoJSON `FeatureCollection`.
+
+# Examples
+
+```julia
+geocode("New York")
+
+geocode(city="New York", state="NY")
+```
+"""
+geocode(q::String; cache::Bool=true) = fetch(Query(q; cache))
+
+geocode(; kw...) = fetch(Query(; kw...))
 
 end
